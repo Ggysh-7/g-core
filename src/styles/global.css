@@ -1,0 +1,39 @@
+/* Design System - Color Tokens */
+:root {
+  --color-black: #000000;
+  --color-cold-dark: #0D1114;
+  --color-tech-gray: #1A1F26;
+  --color-metal: #CECECE;
+  --color-white: #FFFFFF;
+  --color-accent: #5B8CFF;
+
+  --font-primary: 'Inter', system-ui, sans-serif;
+  --font-display: 'Neue Haas Grotesk', 'Helvetica Now', sans-serif;
+
+  --transition-micro: 0.3s ease;
+  --transition-object: 1.5s ease;
+  --transition-scene: 4s ease;
+}
+
+/* HUD Style */
+.hud-label {
+  font-family: var(--font-primary);
+  font-size: 10px;
+  font-weight: 300;
+  letter-spacing: 0.15em;
+  color: rgba(206, 206, 206, 0.5);
+  text-transform: uppercase;
+}
+
+.hud-line {
+  width: 100%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(91, 140, 255, 0.3), transparent);
+}
+
+/* Canvas full screen */
+canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}

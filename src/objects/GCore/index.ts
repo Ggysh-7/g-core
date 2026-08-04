@@ -1,0 +1,6 @@
+﻿export { GCore } from './GCore'
+export type { MaterialMode } from './materials/types'
+export type { GCoreProps } from './GCore'
+export { GOutline } from './GOutline'
+export type { GOutlineProps } from './GOutline'
+export { MATERIAL_PRESETS } from './materials/types'
