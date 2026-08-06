@@ -8,7 +8,7 @@ const SCENE_LABELS = [
 ]
 
 export function HUD() {
-  const { currentScene, isTransitioning } = useScene()
+  const { currentScene, isTransitioning, transitionProgress } = useScene()
 
   return (
     <div style={{
@@ -23,7 +23,7 @@ export function HUD() {
       fontFamily: "'Inter', system-ui, sans-serif",
     }}>
       {/* Top-left: Scene label */}
-      <div style={{ position: 'absolute', top: 24, left: 32 }}>
+      <div style={{ position: 'absolute', top: 24, left: 32, minWidth: 220 }}>
         <p className="hud-label">
           SCENE 0{currentScene + 1}
         </p>
@@ -31,9 +31,14 @@ export function HUD() {
           {SCENE_LABELS[currentScene]}
         </p>
         {isTransitioning && (
-          <p className="hud-label" style={{ marginTop: 8, color: '#5B8CFF' }}>
-            TRANSITIONING...
-          </p>
+          <>
+            <p className="hud-label" style={{ marginTop: 8, color: '#5B8CFF' }}>
+              TRANSITIONING...
+            </p>
+            <div style={{ position: 'relative', marginTop: 10, width: 180, height: 4, background: 'rgba(255,255,255,0.08)', borderRadius: 2 }}>
+              <div style={{ width: `${Math.round(transitionProgress * 100)}%`, height: '100%', background: '#5B8CFF', borderRadius: 2, transition: 'width 0.1s linear' }} />
+            </div>
+          </>
         )}
       </div>
 

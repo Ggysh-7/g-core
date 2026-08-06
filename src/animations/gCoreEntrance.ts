@@ -1,56 +1,44 @@
-﻿import gsap from 'gsap'
+﻿import * as THREE from 'three'
+import gsap from 'gsap'
 
-// ─── Animation constants ───────────────────────────────────────────
+// ─── Constants ─────────────────────────────────────────────────────
 const INITIAL_OFFSET_Y = -0.6
 const INITIAL_OFFSET_Z = -1.8
-const SETTLE_DURATION = 2.4
-const SETTLE_EASE = 'power2.out'
-const REVERSE_EASE = 'power2.in'
 
-// ─── State ─────────────────────────────────────────────────────────
-let timeline: gsap.core.Timeline | null = null
-let isAnimating = false
+// ─── GSAP ↔ Three.js proxy bridge ─────────────────────────────────
 
-// ─── Three.js GSAP bridge ──────────────────────────────────────────
-
-/**
- * Create a proxy object that GSAP can tween, with onUpdate
- * syncing the values back to the Three.js Object3D.
- */
-function createJSProxy(
-  target: THREE.Object3D
-): {
-  _scale: { x: number; y: number; z: number }
-  _position: { x: number; y: number; z: number }
+function createProxy(target: THREE.Object3D): {
+  _scaleX: number
+  _scaleY: number
+  _scaleZ: number
+  _posX: number
+  _posY: number
+  _posZ: number
   _rotationY: number
   _rotationX: number
 } {
   const s = target.scale
   const p = target.position
   const r = target.rotation
-
   return {
-    _scale: { x: s.x, y: s.y, z: s.z },
-    _position: { x: p.x, y: p.y, z: p.z },
+    _scaleX: s.x,
+    _scaleY: s.y,
+    _scaleZ: s.z,
+    _posX: p.x,
+    _posY: p.y,
+    _posZ: p.z,
     _rotationY: r.y,
     _rotationX: r.x,
   }
 }
 
-/**
- * Sync a GSAP proxy back to the Three.js Object3D.
- */
-function syncProxyToJS(
-  proxy: {
-    _scale: { x: number; y: number; z: number }
-    _position: { x: number; y: number; z: number }
-    _rotationY: number
-    _rotationX: number
-  },
-  target: THREE.Object3D
-): void {
-  target.scale.set(proxy._scale.x, proxy._scale.y, proxy._scale.z)
-  target.position.set(proxy._position.x, proxy._position.y, proxy._position.z)
+function cloneProxy(proxy: ReturnType<typeof createProxy>) {
+  return { ...proxy }
+}
+
+function syncToJS(proxy: ReturnType<typeof createProxy>, target: THREE.Object3D): void {
+  target.scale.set(proxy._scaleX, proxy._scaleY, proxy._scaleZ)
+  target.position.set(proxy._posX, proxy._posY, proxy._posZ)
   target.rotation.y = proxy._rotationY
   target.rotation.x = proxy._rotationX
 }
@@ -58,111 +46,107 @@ function syncProxyToJS(
 // ─── Public API ────────────────────────────────────────────────────
 
 /**
- * Trigger the G Core entrance animation.
- * Uses a proxy object to avoid read-only property errors on Three.js Group.
+ * Start the entrance animation on a target.
+ * Returns a cleanup function — call it to kill the timeline.
+ * Each call is fully independent; no shared global state.
  */
-export function playEntrance(
-  target: gsap.core.TweenTarget,
-  onComplete?: () => void
-): void {
-  killEntrance()
-  isAnimating = true
+export function playEntrance(target: THREE.Object3D, onComplete?: () => void): () => void {
+  if (!target) return () => {}
 
-  const group = target as THREE.Object3D
-  if (!group) return
-
-  const proxy = createJSProxy(group)
-
-  timeline = gsap.timeline({
-    onStart: () => { isAnimating = true },
-    onComplete: () => { isAnimating = false; onComplete?.() },
+  const proxy = createProxy(target)
+  const tl = gsap.timeline({
+    onStart: () => {
+      console.log('[gCoreEntrance] playEntrance start', {
+        uuid: target.uuid,
+        scale: target.scale.toArray(),
+        position: target.position.toArray(),
+      })
+    },
+    onComplete: () => {
+      console.log('[gCoreEntrance] playEntrance complete', {
+        uuid: target.uuid,
+        scale: target.scale.toArray(),
+        position: target.position.toArray(),
+      })
+      onComplete?.()
+    },
   })
 
-  // ── Phase 1: Appear (scale 0→1, slide up to origin) ──
-  const appearProxy = { ...proxy }
-  timeline.to(appearProxy, {
-    _scale: { x: 1, y: 1, z: 1 },
-    _position: { x: 0, y: 0, z: 0 },
+  // Single state object shared across the timeline
+  const state = cloneProxy(proxy)
+  let hasLoggedPhase1 = false
+  tl.to(state, {
+    _scaleX: 1,
+    _scaleY: 1,
+    _scaleZ: 1,
+    _posX: 0,
+    _posY: 0,
+    _posZ: 0,
+    duration: 1.2,
+    ease: 'power3.out',
+    onUpdate: () => {
+      if (!hasLoggedPhase1) {
+        hasLoggedPhase1 = true
+        console.log('[gCoreEntrance] phase1 onUpdate', target.scale.toArray(), target.position.toArray())
+      }
+      syncToJS(state, target)
+    },
+  })
+
+  // Phase 2: small settle rotation
+  tl.to(state, {
+    _rotationY: 2 * (Math.PI / 180),
+    _rotationX: -1 * (Math.PI / 180),
     duration: 1.6,
-    ease: 'power3.inOut',
-    onUpdate: () => syncProxyToJS(appearProxy, group),
-  })
+    ease: 'power2.out',
+    onUpdate: () => syncToJS(state, target),
+  }, '-=0.4')
 
-  // ── Phase 2: Settle (subtle rotation overshoot) ──
-  const settleProxy = { ...appearProxy }
-  timeline.to(settleProxy, {
-    _rotationY: 3 * (Math.PI / 180),
-    _rotationX: -1.5 * (Math.PI / 180),
-    duration: SETTLE_DURATION,
-    ease: SETTLE_EASE,
-    onUpdate: () => syncProxyToJS(settleProxy, group),
-  }, '-=0.3')
-
-  // ── Phase 3: Gentle breathing rotation (loops) ──
-  const breatheProxy = { ...settleProxy }
-  timeline.to(breatheProxy, {
-    _rotationY: -2 * (Math.PI / 180),
-    _rotationX: 1 * (Math.PI / 180),
+  // Phase 3: subtle breathing loop around center
+  tl.to(state, {
+    _rotationY: -1.4 * (Math.PI / 180),
+    _rotationX: 0.8 * (Math.PI / 180),
     duration: 3.2,
     ease: 'sine.inOut',
     yoyo: true,
     repeat: -1,
-    onUpdate: () => syncProxyToJS(breatheProxy, group),
-  }, '-=0.8')
+    onUpdate: () => syncToJS(state, target),
+  }, '-=1.2')
 
-  timeline?.play()
+  return () => tl.kill()
 }
 
 /**
- * Reverse the entrance: shrink back to initial hidden state.
+ * Reverse entrance: shrink back to hidden state.
+ * Returns a cleanup function.
  */
-export function reverseEntrance(
-  target: gsap.core.TweenTarget,
-  onComplete?: () => void
-): void {
-  killEntrance()
-  isAnimating = true
+export function reverseEntrance(target: THREE.Object3D, onComplete?: () => void): () => void {
+  if (!target) return () => {}
 
-  const group = target as THREE.Object3D
-  if (!group) return
-
-  const proxy = createJSProxy(group)
-
-  timeline = gsap.timeline({
-    onComplete: () => { isAnimating = false; onComplete?.() },
-  })
-
-  const reverseProxy = { ...proxy }
-  timeline.to(reverseProxy, {
-    _scale: { x: 0, y: 0, z: 0 },
-    _position: { x: 0, y: INITIAL_OFFSET_Y, z: INITIAL_OFFSET_Z },
-    _rotationY: 0,
-    _rotationX: 0,
-    duration: 1.0,
-    ease: REVERSE_EASE,
-    onUpdate: () => syncProxyToJS(reverseProxy, group),
+  const proxy = createProxy(target)
+  const tl = gsap.timeline({
     onComplete: () => {
-      group.scale.set(0, 0, 0)
-      group.position.set(0, INITIAL_OFFSET_Y, INITIAL_OFFSET_Z)
-      group.rotation.set(0, 0, 0)
+      target.scale.set(0, 0, 0)
+      target.position.set(0, INITIAL_OFFSET_Y, INITIAL_OFFSET_Z)
+      target.rotation.set(0, 0, 0)
+      onComplete?.()
     },
   })
 
-  timeline?.play()
-}
+  const p = { ...proxy }
+  tl.to(p, {
+    _scaleX: 0,
+    _scaleY: 0,
+    _scaleZ: 0,
+    _posX: 0,
+    _posY: INITIAL_OFFSET_Y,
+    _posZ: INITIAL_OFFSET_Z,
+    _rotationY: 0,
+    _rotationX: 0,
+    duration: 1.0,
+    ease: 'power2.in',
+    onUpdate: () => syncToJS(p, target),
+  })
 
-/**
- * Kill any running entrance timeline and reset flags.
- */
-export function killEntrance(): void {
-  timeline?.kill()
-  timeline = null
-  isAnimating = false
-}
-
-/**
- * Return the current animation state.
- */
-export function isEntranceAnimating(): boolean {
-  return isAnimating
+  return () => tl.kill()
 }

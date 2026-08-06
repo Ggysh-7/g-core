@@ -69,7 +69,8 @@ export function PostProcessing({
   }, [])
 
   useFrame((_state, _delta) => {
-    composerRef.current?.render()
+    if (!composerRef.current) return
+    composerRef.current.render()
   })
 
   return null

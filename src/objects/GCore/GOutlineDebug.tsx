@@ -1,7 +1,6 @@
-﻿import { useRef, useEffect, useMemo } from 'react'
+import { useRef, useEffect, useMemo } from 'react'
 import * as THREE from 'three'
 import { SVGLoader } from 'three/examples/jsm/loaders/SVGLoader.js'
-import gsap from 'gsap'
 import { playEntrance } from '../../animations'
 
 const ACCENT_COLOR = '#5B8CFF'
@@ -9,14 +8,11 @@ const EDGE_WIDTH = 1.5
 const OPACITY = 0.85
 const SVG_SCALE = 0.03
 
-import type { ScenePhase } from '../../scenes/types'
-
 export interface GOutlineProps {
   scale?: number
   color?: string
   animationEnabled?: boolean
   linewidth?: number
-  phase?: ScenePhase
 }
 
 export function GOutline({
@@ -24,10 +20,8 @@ export function GOutline({
   color = ACCENT_COLOR,
   animationEnabled = true,
   linewidth = EDGE_WIDTH,
-  phase = 'active',
 }: GOutlineProps = {}) {
   const groupRef = useRef<THREE.Group>(null!)
-  const cleanupRef = useRef<(() => void) | null>(null)
 
   const geometry = useMemo(() => {
     const loader = new SVGLoader()
@@ -41,85 +35,70 @@ export function GOutline({
 
     const shapes: THREE.Shape[] = []
     for (const path of svgResult.paths) {
-      shapes.push(...path.toShapes())
+      for (const subPath of path.subPaths) {
+        shapes.push(new THREE.Shape(subPath.getPoints()))
+      }
     }
 
-    const baseGeom = new THREE.ExtrudeGeometry(shapes, {
-      depth: 0.6,
-      bevelEnabled: true,
-      bevelThickness: 0.08,
-      bevelSize: 0.04,
-      bevelSegments: 4,
-      curveSegments: 32,
-    })
-    baseGeom.center()
-    const edgeGeom = new THREE.EdgesGeometry(baseGeom)
+    const edgeGeom = new THREE.EdgesGeometry(
+      new THREE.ExtrudeGeometry(shapes, {
+        depth: 0.6,
+        bevelEnabled: true,
+        bevelThickness: 0.08,
+        bevelSize: 0.04,
+        bevelSegments: 4,
+      })
+    )
     edgeGeom.scale(SVG_SCALE * scale, SVG_SCALE * scale, SVG_SCALE * scale)
     return edgeGeom
   }, [scale])
+
+  const animState = useRef<{
+    group: THREE.Group | null
+    pending: boolean
+  }>({ group: null, pending: false })
 
   useEffect(() => {
     if (!animationEnabled || !groupRef.current) return
 
     const group = groupRef.current
-    cleanupRef.current?.()
+    animState.current.group = group
 
     group.scale.set(0, 0, 0)
     group.position.set(0, -0.6, -1.8)
     group.updateMatrixWorld(true)
 
+    if (animState.current.pending) {
+      animState.current.pending = true
+      return
+    }
+
+    animState.current.pending = true
     const timer = setTimeout(() => {
-      cleanupRef.current = playEntrance(group, () => {})
+      animState.current.pending = false
+      playEntrance(group, () => {})
     }, 600)
 
     return () => {
       clearTimeout(timer)
-      cleanupRef.current?.()
-      cleanupRef.current = null
+      animState.current.pending = false
     }
   }, [animationEnabled])
 
-  useEffect(() => {
-    if (phase !== 'exiting' || !groupRef.current) return
-
-    const group = groupRef.current
-    cleanupRef.current?.()
-
-    const tl = gsap.timeline()
-      .to(group.scale, {
-        x: 0.2,
-        y: 0.2,
-        z: 0.2,
-        duration: 0.8,
-        ease: 'power2.in',
-      })
-      .to(group.position, {
-        x: 0,
-        y: -1.1,
-        z: -2.6,
-        duration: 0.8,
-        ease: 'power2.in',
-      }, 0)
-
-    cleanupRef.current = () => tl.kill()
-
-    return () => {
-      tl.kill()
-      cleanupRef.current = null
-    }
-  }, [phase])
-
   return (
     <group ref={groupRef} renderOrder={-1}>
-      <lineSegments geometry={geometry} material={
-        new THREE.LineBasicMaterial({
-          color: new THREE.Color(color),
-          transparent: true,
-          opacity: OPACITY,
-          linewidth,
-          depthWrite: false,
-        })
-      } />
+      <lineSegments
+        geometry={geometry}
+        material={
+          new THREE.LineBasicMaterial({
+            color: new THREE.Color(color),
+            transparent: true,
+            opacity: OPACITY,
+            linewidth,
+            depthWrite: false,
+          })
+        }
+      />
     </group>
   )
 }

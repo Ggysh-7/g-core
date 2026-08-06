@@ -1,4 +1,5 @@
 ﻿export { GCore } from './GCore'
+export { GCoreParticles } from './GCoreParticles'
 export type { MaterialMode } from './materials/types'
 export type { GCoreProps } from './GCore'
 export { GOutline } from './GOutline'

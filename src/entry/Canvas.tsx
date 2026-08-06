@@ -1,9 +1,23 @@
-﻿import { Canvas } from '@react-three/fiber'
+﻿import { useEffect, type ReactElement } from 'react'
+import { Canvas } from '@react-three/fiber'
 import { Environment } from '@react-three/drei'
 import * as THREE from 'three'
-import { Scene01_Identity } from '../scenes/Scene01_Identity'
-import { SceneRouter } from '../hooks/useScene'
+import { useScene } from '../hooks/useScene'
 import { PostProcessing } from '../effects'
+import { Scene01_Identity } from '../scenes/Scene01_Identity'
+import { Scene02_Archive } from '../scenes/Scene02_Archive'
+import { Scene03_TechMatrix } from '../scenes/Scene03_TechMatrix'
+import { Scene04_FinalMessage } from '../scenes/Scene04_FinalMessage'
+import type { ScenePhase } from '../scenes/types'
+
+type SceneComponentType = (props: { phase?: ScenePhase }) => ReactElement
+
+const SCENE_COMPONENTS: SceneComponentType[] = [
+  Scene01_Identity,
+  Scene02_Archive,
+  Scene03_TechMatrix,
+  Scene04_FinalMessage,
+]
 
 export default function R3FCanvas() {
   return (
@@ -18,14 +32,10 @@ export default function R3FCanvas() {
         outputColorSpace: THREE.SRGBColorSpace,
       }}
     >
-      <SceneRouter>
-        <Scene01_Identity />
-      </SceneRouter>
+      <SceneSelector />
 
-      {/* Environment — studio preset for controlled reflections */}
       <Environment preset="studio" background={false} blur={0.6} />
 
-      {/* Key Light — front-right-top, warm white */}
       <directionalLight
         position={[5, 6, 4]}
         intensity={1.2}
@@ -33,21 +43,18 @@ export default function R3FCanvas() {
         castShadow={false}
       />
 
-      {/* Rim Light — back-left, cool blue for edge definition */}
       <directionalLight
         position={[-4, 3, -5]}
         intensity={0.8}
         color="#B8D4FF"
       />
 
-      {/* Fill Light — soft, from opposite side of key */}
       <pointLight
         position={[3, -2, 3]}
         intensity={0.3}
         color="#FFE8CC"
       />
 
-      {/* Cinematic Post-Processing */}
       <PostProcessing
         bloomStrength={0.35}
         bloomRadius={0.4}
@@ -56,5 +63,73 @@ export default function R3FCanvas() {
         vignetteOffset={1.0}
       />
     </Canvas>
+  )
+}
+
+function SceneSelector() {
+  const { currentScene, activeScene, isTransitioning, transitionProgress } = useScene()
+  const CurrentSceneComponent = SCENE_COMPONENTS[currentScene]
+  const NextSceneComponent = SCENE_COMPONENTS[activeScene]
+
+  console.log('[SceneSelector]', { currentScene, activeScene, isTransitioning, transitionProgress })
+
+  return (
+    <group>
+      {isTransitioning && currentScene !== activeScene ? (
+        <>
+          <CurrentSceneComponent phase="exiting" />
+          <NextSceneComponent phase="entering" />
+          <SceneTransitionOverlay progress={transitionProgress} />
+        </>
+      ) : (
+        <CurrentSceneComponent phase="active" />
+      )}
+      <SceneInputHandler />
+    </group>
+  )
+}
+
+function SceneInputHandler() {
+  const { currentScene, goToScene, isTransitioning } = useScene()
+
+  useEffect(() => {
+    console.log('[SceneInputHandler] mounted', { currentScene, isTransitioning })
+
+    const handleWheel = (event: WheelEvent) => {
+      console.log('[SceneInputHandler] wheel', { deltaY: event.deltaY, currentScene, isTransitioning })
+      if (isTransitioning) return
+      if (event.deltaY > 0 && currentScene < 3) {
+        goToScene((currentScene + 1) as any)
+      } else if (event.deltaY < 0 && currentScene > 0) {
+        goToScene((currentScene - 1) as any)
+      }
+    }
+
+    const handleClick = () => {
+      console.log('[SceneInputHandler] click', { currentScene, isTransitioning })
+      if (isTransitioning) return
+      if (currentScene < 3) {
+        goToScene((currentScene + 1) as any)
+      }
+    }
+
+    window.addEventListener('wheel', handleWheel, { passive: true })
+    window.addEventListener('click', handleClick)
+
+    return () => {
+      window.removeEventListener('wheel', handleWheel)
+      window.removeEventListener('click', handleClick)
+    }
+  }, [currentScene, goToScene, isTransitioning])
+
+  return null
+}
+
+function SceneTransitionOverlay({ progress }: { progress: number }) {
+  return (
+    <mesh position={[0, 0, -1]}>
+      <planeGeometry args={[12, 6]} />
+      <meshBasicMaterial color={`rgba(0,0,0,${0.35 * progress})`} transparent />
+    </mesh>
   )
 }

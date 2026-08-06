@@ -1,20 +1,24 @@
-﻿import { useRef, useLayoutEffect, useEffect } from 'react'
+﻿import { useRef, useLayoutEffect, useEffect, useMemo } from 'react'
 import * as THREE from 'three'
 import { useLoader } from '@react-three/fiber'
-import { SVGLoader } from 'three/examples/jsm/loaders/SVGLoader'
+import gsap from 'gsap'
+import { SVGLoader } from 'three/examples/jsm/loaders/SVGLoader.js'
 import { MATERIAL_PRESETS, type MaterialMode } from './materials/types'
-import { playEntrance, killEntrance } from '../../animations'
+import { playEntrance } from '../../animations'
+import type { ScenePhase } from '../../scenes/types'
 
 const G_SVG_URL = new URL('../../assets/logo/g.svg', import.meta.url).href
 
 const INITIAL_OFFSET_Y = -0.6
 const INITIAL_OFFSET_Z = -1.8
+const SVG_SCALE = 0.03
 
 export interface GCoreProps {
   extrudeDepth?: number
   materialMode?: MaterialMode
   materialProps?: Partial<THREE.MeshPhysicalMaterialParameters>
   animationEnabled?: boolean
+  phase?: ScenePhase
 }
 
 export function GCore({
@@ -22,42 +26,45 @@ export function GCore({
   materialMode = 'glass',
   materialProps = {},
   animationEnabled = true,
+  phase = 'active',
 }: GCoreProps) {
   const meshRef = useRef<THREE.Mesh>(null!)
   const groupRef = useRef<THREE.Group>(null!)
+  const cleanupRef = useRef<(() => void) | null>(null)
+  const exitTimelineRef = useRef<gsap.core.Timeline | null>(null)
 
-  const geometry = useLoader<
-    typeof SVGLoader,
-    THREE.ExtrudeGeometry
-  >(
-    SVGLoader,
-    G_SVG_URL,
-    async (loader) => {
-      const data = await loader.loadAsync(G_SVG_URL)
-      const parsed = data as {
-        paths: Array<{ subPaths: Array<{ getPoints: () => THREE.Vector2[] }> }>
-      }
+  const svgData = useLoader(SVGLoader, G_SVG_URL)
+  const geometry = useMemo(() => {
+    const shapes: THREE.Shape[] = []
+    for (const path of svgData.paths) {
+      shapes.push(...path.toShapes())
+    }
 
-      const shapes: THREE.Shape[] = []
-      for (const path of parsed.paths) {
+    if (shapes.length === 0) {
+      const fallbackShapes: THREE.Shape[] = []
+      for (const path of svgData.paths) {
         for (const subPath of path.subPaths) {
-          const points = subPath.getPoints()
-          const shape = new THREE.Shape(points)
-          shapes.push(shape)
+          fallbackShapes.push(new THREE.Shape(subPath.getPoints()))
         }
       }
-
-      const extrudeSettings: THREE.ExtrudeGeometryOptions = {
-        depth: extrudeDepth,
-        bevelEnabled: true,
-        bevelThickness: 0.08,
-        bevelSize: 0.04,
-        bevelSegments: 4,
-      }
-
-      return new THREE.ExtrudeGeometry(shapes, extrudeSettings)
+      shapes.push(...fallbackShapes)
     }
-  )
+
+    const extrudeSettings: THREE.ExtrudeGeometryOptions = {
+      depth: extrudeDepth,
+      bevelEnabled: true,
+      bevelThickness: 0.08,
+      bevelSize: 0.05,
+      bevelSegments: 8,
+      curveSegments: 32,
+    }
+
+    const geom = new THREE.ExtrudeGeometry(shapes, extrudeSettings)
+    geom.center()
+    geom.scale(SVG_SCALE, SVG_SCALE, SVG_SCALE)
+    geom.computeVertexNormals()
+    return geom
+  }, [svgData, extrudeDepth])
 
   const preset = MATERIAL_PRESETS[materialMode]
 
@@ -69,9 +76,9 @@ export function GCore({
     const baseColor = new THREE.Color(preset.color)
 
     material.color.copy(baseColor)
-    material.metalness = preset.metalness
-    material.roughness = preset.roughness
-    material.envMapIntensity = preset.envMapIntensity
+    if (preset.metalness !== undefined) material.metalness = preset.metalness
+    if (preset.roughness !== undefined) material.roughness = preset.roughness
+    if (preset.envMapIntensity !== undefined) material.envMapIntensity = preset.envMapIntensity
     material.clearcoat = preset.clearcoat ?? 0
     material.clearcoatRoughness = preset.clearcoatRoughness ?? 0
     material.ior = preset.ior ?? 1.5
@@ -101,8 +108,8 @@ export function GCore({
       const prop = material[materialKey]
       if (prop instanceof THREE.Color) {
         prop.set(value as string | number)
-      } else if (typeof prop === 'number' || typeof value === 'number') {
-        (material as Record<string, unknown>)[materialKey] = value
+      } else {
+        ;(material as unknown as Record<string, unknown>)[materialKey] = value
       }
     })
   }, [preset, materialProps])
@@ -111,22 +118,91 @@ export function GCore({
     if (!animationEnabled || !groupRef.current) return
 
     const group = groupRef.current
-    // Set initial hidden state
+    cleanupRef.current?.()
+    exitTimelineRef.current?.kill()
+
     group.scale.set(0, 0, 0)
     group.position.set(0, INITIAL_OFFSET_Y, INITIAL_OFFSET_Z)
-    // Force r3f to render the initial state
+    group.rotation.set(0, 0, 0)
     group.updateMatrixWorld(true)
+    console.log('[GCore] scheduling entrance', {
+      animationEnabled,
+      scale: group.scale.toArray(),
+      position: group.position.toArray(),
+    })
 
-    // Trigger entrance animation after a brief delay
     const timer = setTimeout(() => {
-      playEntrance(group, () => {})
+      cleanupRef.current = playEntrance(group, () => {
+        console.log('[GCore] entrance finished', group.scale.toArray(), group.position.toArray(), group.rotation.toArray())
+      })
     }, 300)
+
+    const monitor = setTimeout(() => {
+      console.log('[GCore] post-animation check', {
+        scale: group.scale.toArray(),
+        position: group.position.toArray(),
+        rotation: group.rotation.toArray(),
+      })
+    }, 2200)
 
     return () => {
       clearTimeout(timer)
-      killEntrance()
+      clearTimeout(monitor)
+      cleanupRef.current?.()
+      cleanupRef.current = null
     }
   }, [animationEnabled])
+
+  useEffect(() => {
+    if (phase !== 'exiting' || !groupRef.current) return
+
+    const group = groupRef.current
+    cleanupRef.current?.()
+    exitTimelineRef.current?.kill()
+
+    const material = meshRef.current?.material as THREE.MeshPhysicalMaterial | null
+    if (material) {
+      material.transparent = true
+    }
+
+    const tl = gsap.timeline()
+      .to(group.scale, {
+        x: 0.14,
+        y: 0.14,
+        z: 0.14,
+        duration: 0.75,
+        ease: 'power2.in',
+      }, 0)
+      .to(group.position, {
+        x: 0,
+        y: INITIAL_OFFSET_Y - 0.7,
+        z: INITIAL_OFFSET_Z - 1.4,
+        duration: 0.85,
+        ease: 'power2.in',
+      }, 0)
+      .to(group.rotation, {
+        x: 0.25,
+        y: Math.PI * 0.32,
+        z: 0.08,
+        duration: 0.85,
+        ease: 'power2.in',
+      }, 0)
+
+    if (material) {
+      tl.to(material, {
+        opacity: 0,
+        duration: 0.7,
+        ease: 'power1.in',
+      }, 0)
+    }
+
+    exitTimelineRef.current = tl
+
+    return () => {
+      tl.kill()
+      exitTimelineRef.current = null
+    }
+  }, [phase])
 
   return (
     <group ref={groupRef}>
@@ -139,6 +215,15 @@ export function GCore({
           metalness: preset.metalness,
           roughness: preset.roughness,
           envMapIntensity: preset.envMapIntensity,
+          transmission: preset.transmission ?? 0.9,
+          thickness: preset.thickness ?? 1.6,
+          clearcoat: preset.clearcoat ?? 0.95,
+          clearcoatRoughness: preset.clearcoatRoughness ?? 0.02,
+          ior: preset.ior ?? 1.55,
+          reflectivity: preset.reflectivity ?? 0.6,
+          transparent: true,
+          opacity: 0.92,
+          side: THREE.DoubleSide,
         })}
       />
     </group>
